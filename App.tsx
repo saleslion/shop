@@ -13,8 +13,11 @@ import { FiMessageSquare, FiX } from 'react-icons/fi';
 const SHOPIFY_API_VERSION = '2024-04';
 const HIFISTI_STORE_DOMAIN = 'hifisti.myshopify.com';
 
-// Read from environment variables (set in Vercel UI or .env for local dev)
-const VITE_HIFISTI_STOREFRONT_API_TOKEN = process.env.VITE_HIFISTI_STOREFRONT_API_TOKEN;
+// Read from Vite environment variables (set in Vercel UI or .env/.env.local for local dev)
+// Safely access the environment variable
+const HIFISTI_STOREFRONT_API_TOKEN = (typeof import.meta !== 'undefined' && import.meta.env)
+  ? import.meta.env.VITE_HIFISTI_STOREFRONT_API_TOKEN
+  : undefined;
 
 const stripHtml = (html: string | null | undefined): string => {
   if (!html) return '';
@@ -39,6 +42,9 @@ const App: React.FC = () => {
 
   // Ref to hold the current session ID for cleanup functions
   const currentSessionIdRef = useRef<string | null>(null);
+  // Ref to track if the main initialization effect has run
+  const appInitializedRef = useRef<boolean>(false);
+
 
   // Effect to keep currentSessionIdRef updated
   useEffect(() => {
@@ -86,7 +92,7 @@ const App: React.FC = () => {
 
   const fetchProductsAndArticlesFromShopify = useCallback(async (): Promise<{ products: ShopifyProduct[], articles: ShopifyArticle[] }> => {
     if (!HIFISTI_STOREFRONT_API_TOKEN) {
-        throw new Error("Storefront API token for Hifisti is not configured. Please set the HIFISTI_STOREFRONT_API_TOKEN environment variable.");
+        throw new Error("Storefront API token for Hifisti is not configured. Please set the VITE_HIFISTI_STOREFRONT_API_TOKEN environment variable.");
     }
     const endpoint = `https://${HIFISTI_STORE_DOMAIN}/api/${SHOPIFY_API_VERSION}/graphql.json`;
     const headers = {
@@ -110,7 +116,7 @@ const App: React.FC = () => {
       if (!productResponse.ok || !articleResponse.ok) {
         let errorMsg = "Failed to fetch data from Shopify for Hifisti.";
         if (productResponse.status === 401 || articleResponse.status === 401) {
-             errorMsg = "Unauthorized: Invalid Shopify Storefront API Access Token for Hifisti. Please check the token and ensure it has correct permissions (read products & articles).";
+             errorMsg = "Unauthorized: Invalid Shopify Storefront API Access Token for Hifisti. Please check the VITE_HIFISTI_STOREFRONT_API_TOKEN and ensure it has correct permissions (read products & articles).";
         }
         throw new Error(errorMsg);
       }
@@ -154,19 +160,26 @@ const App: React.FC = () => {
       const fallbackArticlesCtx = prepareArticleContext(MOCK_SHOPIFY_ARTICLES);
       const fallbackProductsCtx = prepareProductContext(MOCK_SHOPIFY_PRODUCTS);
 
+      let currentContextName = "Hifisti";
+      let usingFallbackData = false;
+
       if (liveProducts.length === 0 && liveArticles.length === 0) {
         setStoreCategories(fallbackCategories);
         setStoreArticles(fallbackArticlesCtx);
         setStoreProductsContext(fallbackProductsCtx);
         setAppError("Connected to Hifisti, but no products or articles found. Displaying sample context for AI. Check Hifisti's catalog, blog, or API permissions.");
+        currentContextName = "Hifisti (Sample Data)";
+        usingFallbackData = true;
       }
+      setStoreDisplayName(currentContextName);
+
 
       setIsAiResponding(true);
       const initResponse = await initializeChatSession({
-          storeName: "Hifisti",
-          categories: derivedCats.length > 0 ? derivedCats : fallbackCategories,
-          articles: preparedArticlesCtx.length > 0 ? preparedArticlesCtx : fallbackArticlesCtx,
-          products: preparedProductsCtx.length > 0 ? preparedProductsCtx : fallbackProductsCtx,
+          storeName: currentContextName,
+          categories: usingFallbackData ? fallbackCategories : derivedCats,
+          articles: usingFallbackData ? fallbackArticlesCtx : preparedArticlesCtx,
+          products: usingFallbackData ? fallbackProductsCtx : preparedProductsCtx,
       }, HIFISTI_STORE_DOMAIN );
 
       setChatMessages([{ id: Date.now().toString(), sender: 'ai', text: initResponse.text, timestamp: new Date() }]);
@@ -183,7 +196,12 @@ const App: React.FC = () => {
   }, [fetchProductsAndArticlesFromShopify]);
 
   useEffect(() => {
-    // Initialize the app only once
+    // Ensure initialization logic runs only once
+    if (appInitializedRef.current) {
+      return;
+    }
+    appInitializedRef.current = true;
+    
     initializeAppForHifisti();
 
     const handleBeforeUnload = () => {
@@ -198,10 +216,10 @@ const App: React.FC = () => {
       if (currentSessionIdRef.current) {
         endChatSession(currentSessionIdRef.current);
       }
+      // Do not reset appInitializedRef.current here, as this cleanup can run multiple times
+      // in StrictMode or due to HMR. We want it to mark the *initial app load* as done.
     };
-    // initializeAppForHifisti is stable due to useCallback with stable dependencies.
-    // This effect now runs only once on mount.
-  }, [initializeAppForHifisti]);
+  }, [initializeAppForHifisti]); // initializeAppForHifisti is stable due to useCallback
 
 
   const handleSendMessage = async (messageText: string) => {
@@ -215,7 +233,6 @@ const App: React.FC = () => {
     setAppError(null);
 
     try {
-      // Use currentSessionId directly from state as it's guaranteed to be set if chatInitialized is true
       const aiResponseText = await sendChatMessage(messageText, currentSessionId);
       const newAiMessage: ChatMessage = {
         id: `ai-${Date.now()}`, sender: 'ai', text: aiResponseText, timestamp: new Date(),
@@ -236,11 +253,11 @@ const App: React.FC = () => {
 
   const toggleChat = () => setIsChatOpen(prev => !prev);
 
-  if (isLoadingData && !appError) {
+  if (isLoadingData && !appError && !appInitializedRef.current) { // Show initial loading only if app not initialized yet
     return (
       <div className="fixed inset-0 bg-slate-900 bg-opacity-80 flex flex-col justify-center items-center z-50">
         <div className="inline-block"><LoadingSpinner /></div>
-        <p className="text-sky-400 mt-4 text-lg">Connecting to Hifisti & preparing AI Advisor...</p>
+        <p className="text-sky-400 mt-4 text-lg">Connecting to {storeDisplayName} & preparing AI Advisor...</p>
       </div>
     );
   }
@@ -251,10 +268,10 @@ const App: React.FC = () => {
             <div className="max-w-md w-full">
                 <Header />
                 <div className="mt-8">
-                    <ErrorMessage message={`${appError}${HIFISTI_STOREFRONT_API_TOKEN === undefined ? " Please ensure the HIFISTI_STOREFRONT_API_TOKEN environment variable is correctly set and accessible." : ""}`} />
+                    <ErrorMessage message={`${appError}${HIFISTI_STOREFRONT_API_TOKEN === undefined ? " Please ensure the VITE_HIFISTI_STOREFRONT_API_TOKEN environment variable is correctly set and accessible." : ""}`} />
                 </div>
                  <footer className="text-center p-4 text-slate-500 text-sm mt-8">
-                    <p>&copy; {new Date().getFullYear()} Hifisti AI Product Advisor. Powered by Gemini.</p>
+                    <p>&copy; {new Date().getFullYear()} {storeDisplayName} AI Product Advisor. Powered by Gemini.</p>
                 </footer>
             </div>
         </div>
@@ -282,13 +299,13 @@ const App: React.FC = () => {
               storeDisplayName={storeDisplayName}
             />
           </main>
-          {appError && chatInitialized && (
+          {appError && chatInitialized && ( // Only show this minor error if chat is otherwise functional
              <div className="p-2 border-t border-slate-700">
                 <p className="text-xs text-red-400 text-center">{appError}</p>
              </div>
           )}
            <footer className="text-center py-2 px-4 bg-slate-950 text-slate-600 text-xs border-t border-slate-700">
-            Hifisti AI Advisor
+            {storeDisplayName} AI Advisor
           </footer>
         </div>
       )}
@@ -297,4 +314,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-    
