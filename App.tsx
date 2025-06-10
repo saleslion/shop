@@ -14,7 +14,7 @@ const SHOPIFY_API_VERSION = '2024-04';
 const HIFISTI_STORE_DOMAIN = 'hifisti.myshopify.com';
 
 // Read from environment variables (set in Vercel UI or .env for local dev)
-const HIFISTI_STOREFRONT_API_TOKEN = process.env.VITE_HIFISTI_STOREFRONT_API_TOKEN;
+const VITE_HIFISTI_STOREFRONT_API_TOKEN = process.env.VITE_HIFISTI_STOREFRONT_API_TOKEN;
 
 const stripHtml = (html: string | null | undefined): string => {
   if (!html) return '';
