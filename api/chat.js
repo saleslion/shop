@@ -41,4 +41,4 @@ export default async function handler(req, res) {
       const productInfos = (storeContext.products || []).map(p => `- "${p.title}" (Handle: ${p.handle}, Category: ${p.product_type}, Tags: ${(p.tags || []).join(', ') || 'N/A'})`).join('\n') || 'a range of products';
       const currentStoreDomainForLinks = storeDomain.includes('.') ? storeDomain : `${storeDomain}.myshopify.com`;
 
-      const systemInstruction = `You are a friendly, expert AI shopping assistant for "Hifisti".
+      const systemInstruction = `You are a friendly, expert AI shopping assistant for "Hifisti".`;
