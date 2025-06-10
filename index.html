@@ -3,32 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shopify AI Product Advisor (Vite)</title> <!-- Updated title slightly for clarity -->
+  <title>Shopify AI Product Advisor (Vite)</title>
   
   <!-- 
-    Tailwind CSS CDN - For a production Vite setup, it's recommended to install 
-    Tailwind CSS as a dev dependency and configure it via PostCSS.
-    See: https://tailwindcss.com/docs/guides/vite
+    Tailwind CSS is now expected to be part of your Vite build process.
+    Remove this CDN link if you have set up Tailwind with PostCSS in Vite.
+    If not, you can temporarily keep it, but integrating it is recommended.
+    <script src="https://cdn.tailwindcss.com"></script> 
   -->
-  <script src="https://cdn.tailwindcss.com"></script>
   
   <style>
+    /* It's better to move these global styles to src/index.css or similar */
     body {
-      font-family: 'Inter', sans-serif; /* A nice default sans-serif font */
+      font-family: 'Inter', sans-serif;
     }
-    /* Custom scrollbar for dark theme */
     ::-webkit-scrollbar {
       width: 8px;
     }
     ::-webkit-scrollbar-track {
-      background: #2d3748; /* dark-700 */
+      background: #2d3748;
     }
     ::-webkit-scrollbar-thumb {
-      background: #718096; /* dark-500 */
+      background: #718096;
       border-radius: 4px;
     }
     ::-webkit-scrollbar-thumb:hover {
-      background: #a0aec0; /* dark-400 */
+      background: #a0aec0;
     }
     .form-input, .form-textarea, .form-select {
       @apply w-full p-3 border border-slate-600 bg-slate-800 text-slate-100 rounded-lg shadow-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors duration-200 placeholder-slate-500;
@@ -46,11 +46,7 @@
       @apply bg-slate-800 shadow-xl rounded-xl border border-slate-700;
     }
   </style>
-  <!-- 
-    The importmap is removed. Vite handles NPM dependencies.
-    You should install react, react-dom, @google/genai, react-icons via npm/yarn.
-    e.g., npm install react react-dom @google/genai react-icons
-  -->
+  <!-- Import map removed as Vite handles NPM dependencies -->
 <script type="importmap">
 {
   "imports": {
@@ -62,13 +58,11 @@
   }
 }
 </script>
+<link rel="stylesheet" href="/index.css">
 </head>
 <body class="bg-slate-900 text-slate-200">
   <div id="root"></div>
   <script type="module" src="/src/main.tsx"></script> 
-  <!-- 
-    Vite's entry point is typically /src/main.tsx or /src/index.tsx.
-    Ensure this path matches your Vite project structure.
-  -->
+<script type="module" src="/index.tsx"></script>
 </body>
 </html>

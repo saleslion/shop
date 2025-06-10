@@ -5,16 +5,15 @@ import { MOCK_SHOPIFY_PRODUCTS, MOCK_SHOPIFY_ARTICLES } from './constants';
 import { initializeChatSession, sendChatMessage, endChatSession } from './services/geminiService';
 
 import Header from './components/Header';
-// ShopifyStoreInput is removed
 import ChatInterface from './components/ChatInterface';
 import ErrorMessage from './components/ErrorMessage';
 import LoadingSpinner from './components/LoadingSpinner';
-import { FiMessageSquare, FiX } from 'react-icons/fi'; // Icons for chat toggle
+import { FiMessageSquare, FiX } from 'react-icons/fi';
 
 const SHOPIFY_API_VERSION = '2024-04'; 
 const HIFISTI_STORE_DOMAIN = 'hifisti.myshopify.com';
-// IMPORTANT: Replace with your actual Storefront API token for hifisti.myshopify.com
-const HIFISTI_STOREFRONT_API_TOKEN = "YOUR_HIFISTI_STOREFRONT_API_TOKEN_PLACEHOLDER"; 
+// Read from Vite environment variables (set in Vercel UI and .env.local for local dev)
+const HIFISTI_STOREFRONT_API_TOKEN = import.meta.env.VITE_HIFISTI_STOREFRONT_API_TOKEN;
 
 const stripHtml = (html: string | null | undefined): string => {
   if (!html) return '';
@@ -23,9 +22,9 @@ const stripHtml = (html: string | null | undefined): string => {
 };
 
 const App: React.FC = () => {
-  const [storeDisplayName, setStoreDisplayName] = useState<string>("Hifisti"); // Hardcoded
+  const [storeDisplayName, setStoreDisplayName] = useState<string>("Hifisti");
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
-  const [isLoadingData, setIsLoadingData] = useState<boolean>(true); // For initial data load
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
   
   const [storeCategories, setStoreCategories] = useState<ShopifyCategory[]>([]);
   const [storeArticles, setStoreArticles] = useState<ShopifyArticleContextInfo[]>([]);
@@ -35,6 +34,8 @@ const App: React.FC = () => {
   const [isAiResponding, setIsAiResponding] = useState<boolean>(false);
   const [appError, setAppError] = useState<string | null>(null);
   const [chatInitialized, setChatInitialized] = useState<boolean>(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+
 
   const deriveCategoriesFromProducts = (products: ShopifyProduct[]): ShopifyCategory[] => {
     const productTypesMap = new Map<string, number>();
@@ -75,8 +76,8 @@ const App: React.FC = () => {
   };
 
   const fetchProductsAndArticlesFromShopify = useCallback(async (): Promise<{ products: ShopifyProduct[], articles: ShopifyArticle[] }> => {
-    if (HIFISTI_STOREFRONT_API_TOKEN === "YOUR_HIFISTI_STOREFRONT_API_TOKEN_PLACEHOLDER") {
-        throw new Error("Storefront API token for Hifisti is not configured. Please update it in App.tsx.");
+    if (!HIFISTI_STOREFRONT_API_TOKEN) { // Check if token is loaded from env
+        throw new Error("Storefront API token for Hifisti is not configured. Please set VITE_HIFISTI_STOREFRONT_API_TOKEN environment variable.");
     }
     const endpoint = `https://${HIFISTI_STORE_DOMAIN}/api/${SHOPIFY_API_VERSION}/graphql.json`;
     const headers = {
@@ -100,7 +101,7 @@ const App: React.FC = () => {
       if (!productResponse.ok || !articleResponse.ok) {
         let errorMsg = "Failed to fetch data from Shopify for Hifisti.";
         if (productResponse.status === 401 || articleResponse.status === 401) {
-             errorMsg = "Unauthorized: Invalid Shopify Storefront API Access Token for Hifisti. Please check the token in App.tsx and ensure it has correct permissions (read products & articles).";
+             errorMsg = "Unauthorized: Invalid Shopify Storefront API Access Token for Hifisti. Please check the token and ensure it has correct permissions (read products & articles).";
         }
         throw new Error(errorMsg);
       }
@@ -121,7 +122,7 @@ const App: React.FC = () => {
         console.error("[Hifisti Shopify API Call] Error:", error);
         throw error; 
     }
-  }, []); // Empty dependency array as constants are used.
+  }, []);
 
   const initializeAppForHifisti = useCallback(async () => {
     setAppError(null);
@@ -152,19 +153,21 @@ const App: React.FC = () => {
       }
       
       setIsAiResponding(true); 
-      const aiWelcomeMessage = await initializeChatSession({
-          storeName: "Hifisti", // Hardcoded
+      const initResponse = await initializeChatSession({
+          storeName: "Hifisti",
           categories: derivedCats.length > 0 ? derivedCats : fallbackCategories, 
           articles: preparedArticlesCtx.length > 0 ? preparedArticlesCtx : fallbackArticlesCtx,
           products: preparedProductsCtx.length > 0 ? preparedProductsCtx : fallbackProductsCtx,
       }, HIFISTI_STORE_DOMAIN );
-      setChatMessages([{ id: Date.now().toString(), sender: 'ai', text: aiWelcomeMessage, timestamp: new Date() }]);
+      
+      setChatMessages([{ id: Date.now().toString(), sender: 'ai', text: initResponse.text, timestamp: new Date() }]);
+      setCurrentSessionId(initResponse.sessionId); // Store session ID
       setChatInitialized(true);
 
     } catch (err) {
       if (err instanceof Error) setAppError(err.message);
       else setAppError("An unknown error occurred while connecting to Hifisti Shopify store.");
-      endChatSession(); 
+      // endChatSession will be called via backend if needed or on component unmount
     } finally {
       setIsLoadingData(false);
       setIsAiResponding(false);
@@ -172,15 +175,27 @@ const App: React.FC = () => {
   }, [fetchProductsAndArticlesFromShopify]);
 
   useEffect(() => {
-    initializeAppForHifisti(); // Initialize on component mount
+    initializeAppForHifisti();
+    
+    // Optional: Call endChatSession on backend when window is closed/unloaded
+    const handleBeforeUnload = () => {
+      if (currentSessionId) {
+        endChatSession(currentSessionId); // Assuming endChatSession can take a sessionId
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
-        endChatSession(); // Clean up on unmount
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (currentSessionId) {
+        endChatSession(currentSessionId); // End session on unmount
+      }
     }
-  }, [initializeAppForHifisti]);
+  }, [initializeAppForHifisti, currentSessionId]);
 
 
   const handleSendMessage = async (messageText: string) => {
-    if (!messageText.trim() || !chatInitialized) return;
+    if (!messageText.trim() || !chatInitialized || !currentSessionId) return;
 
     const newUserMessage: ChatMessage = {
       id: `user-${Date.now()}`, sender: 'user', text: messageText, timestamp: new Date(),
@@ -190,7 +205,7 @@ const App: React.FC = () => {
     setAppError(null);
 
     try {
-      const aiResponseText = await sendChatMessage(messageText);
+      const aiResponseText = await sendChatMessage(messageText, currentSessionId);
       const newAiMessage: ChatMessage = {
         id: `ai-${Date.now()}`, sender: 'ai', text: aiResponseText, timestamp: new Date(),
       };
@@ -210,7 +225,6 @@ const App: React.FC = () => {
   
   const toggleChat = () => setIsChatOpen(prev => !prev);
 
-  // Loading state for initial data fetch
   if (isLoadingData && !appError) {
     return (
       <div className="fixed inset-0 bg-slate-900 bg-opacity-80 flex flex-col justify-center items-center z-50">
@@ -220,14 +234,13 @@ const App: React.FC = () => {
     );
   }
 
-  // Critical error display blocking chat
-  if (appError && (!chatInitialized || HIFISTI_STOREFRONT_API_TOKEN === "YOUR_HIFISTI_STOREFRONT_API_TOKEN_PLACEHOLDER")) {
+  if (appError && (!chatInitialized || !HIFISTI_STOREFRONT_API_TOKEN)) {
      return (
         <div className="fixed inset-0 bg-slate-900 flex flex-col justify-center items-center p-8 z-40">
             <div className="max-w-md w-full">
                 <Header /> 
                 <div className="mt-8">
-                    <ErrorMessage message={`${appError} Please ensure the Storefront API Token is correctly set in App.tsx.`} />
+                    <ErrorMessage message={`${appError} Please ensure the VITE_HIFISTI_STOREFRONT_API_TOKEN environment variable is correctly set.`} />
                 </div>
                  <footer className="text-center p-4 text-slate-500 text-sm mt-8">
                     <p>&copy; {new Date().getFullYear()} Hifisti AI Product Advisor. Powered by Gemini.</p>
@@ -236,7 +249,6 @@ const App: React.FC = () => {
         </div>
      );
   }
-
 
   return (
     <>
@@ -250,8 +262,8 @@ const App: React.FC = () => {
 
       {isChatOpen && (
         <div className="fixed bottom-20 right-5 w-[calc(100%-40px)] max-w-md h-[calc(100%-100px)] max-h-[650px] bg-slate-900 flex flex-col shadow-2xl rounded-xl z-[1000] border border-slate-700 overflow-hidden">
-          <Header /> {/* No need for connectedStoreName now */}
-          <main className="flex-grow flex flex-col p-0 overflow-hidden"> {/* Adjusted padding */}
+          <Header />
+          <main className="flex-grow flex flex-col p-0 overflow-hidden">
             <ChatInterface
               messages={chatMessages}
               onSendMessage={handleSendMessage}
@@ -259,7 +271,7 @@ const App: React.FC = () => {
               storeDisplayName={storeDisplayName}
             />
           </main>
-          {appError && ( // Display non-critical errors within chat if chat is initialized
+          {appError && chatInitialized && ( 
              <div className="p-2 border-t border-slate-700">
                 <p className="text-xs text-red-400 text-center">{appError}</p>
              </div>
