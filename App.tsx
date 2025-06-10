@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ShopifyProduct, ShopifyArticle, ShopifyCategory, ChatMessage, ShopifyArticleContextInfo, ShopifyProductContextInfo } from './types';
-import { MOCK_SHOPIFY_PRODUCTS, MOCK_SHOPIFY_ARTICLES } from './constants';
-import { initializeChatSession, sendChatMessage, endChatSession } from './services/geminiService';
+import { ShopifyProduct, ShopifyArticle, ShopifyCategory, ChatMessage, ShopifyArticleContextInfo, ShopifyProductContextInfo } from './types'; // Assuming types.ts is in the root
+import { MOCK_SHOPIFY_PRODUCTS, MOCK_SHOPIFY_ARTICLES } from './constants'; // Assuming constants.ts is in the root
+import { initializeChatSession, sendChatMessage, endChatSession } from './services/geminiService'; // Assuming services/geminiService.ts
 
 import Header from './components/Header';
 import ChatInterface from './components/ChatInterface';
@@ -13,12 +13,11 @@ import { FiMessageSquare, FiX } from 'react-icons/fi';
 const SHOPIFY_API_VERSION = '2024-04';
 const HIFISTI_STORE_DOMAIN = 'hifisti.myshopify.com';
 
-// Read from Vite environment variables (set in Vercel UI or .env/.env.local for local dev)
-// Safely access the environment variable
 const HIFISTI_STOREFRONT_API_TOKEN = (typeof import.meta !== 'undefined' && import.meta.env)
   ? import.meta.env.VITE_HIFISTI_STOREFRONT_API_TOKEN
   : undefined;
 
+// Helper to strip HTML (remains useful for preparing display data)
 const stripHtml = (html: string | null | undefined): string => {
   if (!html) return '';
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -28,11 +27,12 @@ const stripHtml = (html: string | null | undefined): string => {
 const App: React.FC = () => {
   const [storeDisplayName, setStoreDisplayName] = useState<string>("Hifisti");
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
-  const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
+  const [isLoadingShopifyData, setIsLoadingShopifyData] = useState<boolean>(true); // For Shopify data, not AI init
 
+  // These states are for local display/selection, not directly for AI context anymore
   const [storeCategories, setStoreCategories] = useState<ShopifyCategory[]>([]);
-  const [storeArticles, setStoreArticles] = useState<ShopifyArticleContextInfo[]>([]);
-  const [storeProductsContext, setStoreProductsContext] = useState<ShopifyProductContextInfo[]>([]);
+  // const [storeArticlesForDisplay, setStoreArticlesForDisplay] = useState<ShopifyArticle[]>([]);
+  // const [storeProductsForDisplay, setStoreProductsForDisplay] = useState<ShopifyProduct[]>([]);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isAiResponding, setIsAiResponding] = useState<boolean>(false);
@@ -40,17 +40,12 @@ const App: React.FC = () => {
   const [chatInitialized, setChatInitialized] = useState<boolean>(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
-  // Ref to hold the current session ID for cleanup functions
   const currentSessionIdRef = useRef<string | null>(null);
-  // Ref to track if the main initialization effect has run
-  const appInitializedRef = useRef<boolean>(false);
+  const appInitializedRef = useRef<boolean>(false); // For the entire app's one-time setup
 
-
-  // Effect to keep currentSessionIdRef updated
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
-
 
   const deriveCategoriesFromProducts = (products: ShopifyProduct[]): ShopifyCategory[] => {
     const productTypesMap = new Map<string, number>();
@@ -63,174 +58,134 @@ const App: React.FC = () => {
       productCount: count,
     })).sort((a, b) => a.name.localeCompare(b.name));
   };
-
-  const prepareArticleContext = (articles: ShopifyArticle[]): ShopifyArticleContextInfo[] => {
-    return articles.map(article => ({
-      id: article.id,
-      handle: article.handle,
-      title: article.title,
-      excerpt: stripHtml(article.excerpt_html || article.body_html).substring(0, 200) + '...',
-      tags: article.tags || [],
-    }));
-  };
-
-  const prepareProductContext = (products: ShopifyProduct[]): ShopifyProductContextInfo[] => {
-    return products.map(product => {
-      const plainDescription = stripHtml(product.body_html);
-      let shortDesc = plainDescription.substring(0, 100);
-      if (plainDescription.length > 100) shortDesc += "...";
-      if (!shortDesc && product.tags.length > 0) {
-        shortDesc = "Key features include: " + product.tags.slice(0, 3).join(', ') + ".";
-      }
-      return {
-        id: product.id, handle: product.handle, title: product.title,
-        product_type: product.product_type || "General", tags: product.tags || [],
-        short_description: shortDesc,
-      };
-    });
-  };
-
-  const fetchProductsAndArticlesFromShopify = useCallback(async (): Promise<{ products: ShopifyProduct[], articles: ShopifyArticle[] }> => {
+  
+  // This function is still useful if you want to display products/articles in the UI
+  // or use them for some other client-side logic, but NOT for AI initial context.
+  const fetchAndPrepareShopifyDataForDisplay = useCallback(async () => {
     if (!HIFISTI_STOREFRONT_API_TOKEN) {
-        throw new Error("Storefront API token for Hifisti is not configured. Please set the VITE_HIFISTI_STOREFRONT_API_TOKEN environment variable.");
+      throw new Error("Storefront API token for Hifisti is not configured. Please set the VITE_HIFISTI_STOREFRONT_API_TOKEN environment variable.");
     }
     const endpoint = `https://${HIFISTI_STORE_DOMAIN}/api/${SHOPIFY_API_VERSION}/graphql.json`;
     const headers = {
       'Content-Type': 'application/json',
       'X-Shopify-Storefront-Access-Token': HIFISTI_STOREFRONT_API_TOKEN,
     };
-
-    console.log(`[Shopify API Call] Preparing to fetch data for Hifisti...`);
-
+    console.log(`[Shopify API Call] Preparing to fetch data for ${HIFISTI_STORE_DOMAIN} (for UI display)...`);
     const productQuery = `
-      query GetProducts { products(first: 75, sortKey: PRODUCT_TYPE) { edges { node { id handle title descriptionHtml vendor productType tags images(first: 1) { edges { node { src altText } } } } } } }`;
-    const articleQuery = `
-      query GetArticles { articles(first: 50, sortKey: TITLE) { edges { node { id handle title contentHtml excerptHtml blog { title } authorV2 { name } tags image { src altText } } } } }`;
-
+      query GetProducts { products(first: 20, sortKey: PRODUCT_TYPE) { edges { node { id handle title descriptionHtml vendor productType tags images(first: 1) { edges { node { src altText } } } } } } }`;
+    // Article query can be added if needed for UI display
     try {
-      const [productResponse, articleResponse] = await Promise.all([
-        fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ query: productQuery }) }),
-        fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ query: articleQuery }) })
-      ]);
-
-      if (!productResponse.ok || !articleResponse.ok) {
-        let errorMsg = "Failed to fetch data from Shopify for Hifisti.";
-        if (productResponse.status === 401 || articleResponse.status === 401) {
-             errorMsg = "Unauthorized: Invalid Shopify Storefront API Access Token for Hifisti. Please check the VITE_HIFISTI_STOREFRONT_API_TOKEN and ensure it has correct permissions (read products & articles).";
+      const productResponse = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ query: productQuery }) });
+      if (!productResponse.ok) {
+        let errorMsg = "Failed to fetch product data from Shopify for Hifisti.";
+        if (productResponse.status === 401 ) {
+             errorMsg = "Unauthorized: Invalid Shopify Storefront API Access Token for Hifisti. Please check VITE_HIFISTI_STOREFRONT_API_TOKEN.";
         }
         throw new Error(errorMsg);
       }
       const productJson: any = await productResponse.json();
-      const articleJson: any = await articleResponse.json();
-
-      if (productJson.errors || articleJson.errors) {
-        throw new Error(`GraphQL errors: ${JSON.stringify(productJson.errors || articleJson.errors)}`);
-      }
+      if (productJson.errors) throw new Error(`GraphQL errors: ${JSON.stringify(productJson.errors)}`);
+      
       const fetchedProducts: ShopifyProduct[] = (productJson.data?.products?.edges || []).map((edge: any) => ({
         id: edge.node.id, handle: edge.node.handle, title: edge.node.title, body_html: edge.node.descriptionHtml, vendor: edge.node.vendor, product_type: edge.node.productType, tags: edge.node.tags || [], images: (edge.node.images?.edges || []).map((imgEdge: any) => ({ src: imgEdge.node.src, altText: imgEdge.node.altText })),
       }));
-      const fetchedArticles: ShopifyArticle[] = (articleJson.data?.articles?.edges || []).map((edge: any) => ({
-        id: edge.node.id, handle: edge.node.handle, title: edge.node.title, body_html: edge.node.contentHtml, excerpt_html: edge.node.excerptHtml, blog_title: edge.node.blog?.title || "Blog", author_name: edge.node.authorV2?.name || "Unknown Author", tags: edge.node.tags || [], image: edge.node.image ? { src: edge.node.image.src, altText: edge.node.image.altText } : null,
-      }));
-      return { products: fetchedProducts, articles: fetchedArticles };
+      
+      setStoreCategories(deriveCategoriesFromProducts(fetchedProducts.length > 0 ? fetchedProducts : MOCK_SHOPIFY_PRODUCTS));
+      // Set other states like setStoreProductsForDisplay(fetchedProducts) if needed for UI
+      if (fetchedProducts.length === 0) {
+        setAppError("Fetched from Shopify, but no products found. Displaying sample categories if any.");
+      }
+
     } catch (error) {
-        console.error("[Hifisti Shopify API Call] Error:", error);
-        throw error;
+        console.error("[Hifisti Shopify API Call for Display] Error:", error);
+        setStoreCategories(deriveCategoriesFromProducts(MOCK_SHOPIFY_PRODUCTS)); // Fallback categories for UI
+        throw error; // Rethrow to be caught by initializeApp
     }
   }, []);
 
-  const initializeAppForHifisti = useCallback(async () => {
+
+  const initializeApp = useCallback(async () => {
     setAppError(null);
-    setIsLoadingData(true);
+    setIsLoadingShopifyData(true); // For Shopify data part
     setChatMessages([]);
     setChatInitialized(false);
 
     try {
-      const { products: liveProducts, articles: liveArticles } = await fetchProductsAndArticlesFromShopify();
-
-      const derivedCats = deriveCategoriesFromProducts(liveProducts);
-      const preparedArticlesCtx = prepareArticleContext(liveArticles);
-      const preparedProductsCtx = prepareProductContext(liveProducts);
-
-      setStoreCategories(derivedCats);
-      setStoreArticles(preparedArticlesCtx);
-      setStoreProductsContext(preparedProductsCtx);
-
-      const fallbackCategories = deriveCategoriesFromProducts(MOCK_SHOPIFY_PRODUCTS);
-      const fallbackArticlesCtx = prepareArticleContext(MOCK_SHOPIFY_ARTICLES);
-      const fallbackProductsCtx = prepareProductContext(MOCK_SHOPIFY_PRODUCTS);
-
-      let currentContextName = "Hifisti";
-      let usingFallbackData = false;
-
-      if (liveProducts.length === 0 && liveArticles.length === 0) {
-        setStoreCategories(fallbackCategories);
-        setStoreArticles(fallbackArticlesCtx);
-        setStoreProductsContext(fallbackProductsCtx);
-        setAppError("Connected to Hifisti, but no products or articles found. Displaying sample context for AI. Check Hifisti's catalog, blog, or API permissions.");
-        currentContextName = "Hifisti (Sample Data)";
-        usingFallbackData = true;
-      }
-      setStoreDisplayName(currentContextName);
-
-
-      setIsAiResponding(true);
-      const initResponse = await initializeChatSession({
-          storeName: currentContextName,
-          categories: usingFallbackData ? fallbackCategories : derivedCats,
-          articles: usingFallbackData ? fallbackArticlesCtx : preparedArticlesCtx,
-          products: usingFallbackData ? fallbackProductsCtx : preparedProductsCtx,
-      }, HIFISTI_STORE_DOMAIN );
-
-      setChatMessages([{ id: Date.now().toString(), sender: 'ai', text: initResponse.text, timestamp: new Date() }]);
-      setCurrentSessionId(initResponse.sessionId); // Store session ID in state
-      setChatInitialized(true);
+      // Step 1: Fetch Shopify data for UI display (categories, product lists etc.)
+      // This is now separate from AI context priming.
+      await fetchAndPrepareShopifyDataForDisplay();
+      // If successful, storeDisplayName can be set based on actual connection
+      setStoreDisplayName("Hifisti"); 
 
     } catch (err) {
-      if (err instanceof Error) setAppError(err.message);
-      else setAppError("An unknown error occurred while connecting to Hifisti Shopify store.");
+      // Handle Shopify data fetching errors - display these in UI but still try to init chat
+      if (err instanceof Error) setAppError(`Shopify Connect Error: ${err.message}. AI Advisor might have limited knowledge.`);
+      else setAppError("Unknown error connecting to Shopify. AI Advisor might have limited knowledge.");
+      setStoreDisplayName("Hifisti (Offline)"); // Indicate potential issue
     } finally {
-      setIsLoadingData(false);
-      setIsAiResponding(false);
+      setIsLoadingShopifyData(false);
     }
-  }, [fetchProductsAndArticlesFromShopify]);
+
+    // Step 2: Initialize chat session with the backend (RAG version)
+    // This happens regardless of Shopify data fetching success, as AI might work with Supabase data.
+    try {
+        setIsAiResponding(true); // AI is "responding" by initializing
+        const initResponse = await initializeChatSession({
+            storeName: "Hifisti", // Keep it simple, backend knows context
+            storeDomain: HIFISTI_STORE_DOMAIN,
+        });
+
+        setChatMessages([{ id: Date.now().toString(), sender: 'ai', text: initResponse.text, timestamp: new Date() }]);
+        setCurrentSessionId(initResponse.sessionId);
+        setChatInitialized(true);
+        // Clear any previous Shopify-related appError if chat init is successful
+        if(appError && appError.startsWith("Shopify Connect Error")){
+           // Keep the Shopify error for info, but main app is now chat-ready
+           setAppError(appError + " Chat AI is active.");
+        } else {
+           setAppError(null); // Clear general errors if chat is fine
+        }
+    } catch (chatErr) {
+        if (chatErr instanceof Error) setAppError(prevError => `${prevError ? prevError + " " : ""}Chat AI Init Error: ${chatErr.message}`);
+        else setAppError(prevError => `${prevError ? prevError + " " : ""}Unknown error initializing Chat AI.`);
+        setChatInitialized(false); // Explicitly set chat as not initialized on error
+    } finally {
+        setIsAiResponding(false);
+    }
+  }, [fetchAndPrepareShopifyDataForDisplay, appError]); // appError added to allow clearing it
 
   useEffect(() => {
-    // Ensure initialization logic runs only once
-    if (appInitializedRef.current) {
-      return;
-    }
+    if (appInitializedRef.current) return;
     appInitializedRef.current = true;
     
-    initializeAppForHifisti();
+    initializeApp();
 
     const handleBeforeUnload = () => {
-      if (currentSessionIdRef.current) {
-        endChatSession(currentSessionIdRef.current);
-      }
+      if (currentSessionIdRef.current) endChatSession(currentSessionIdRef.current);
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      if (currentSessionIdRef.current) {
-        endChatSession(currentSessionIdRef.current);
-      }
-      // Do not reset appInitializedRef.current here, as this cleanup can run multiple times
-      // in StrictMode or due to HMR. We want it to mark the *initial app load* as done.
+      if (currentSessionIdRef.current) endChatSession(currentSessionIdRef.current);
     };
-  }, [initializeAppForHifisti]); // initializeAppForHifisti is stable due to useCallback
+  }, [initializeApp]);
 
 
   const handleSendMessage = async (messageText: string) => {
-    if (!messageText.trim() || !chatInitialized || !currentSessionId) return;
+    if (!messageText.trim() || !chatInitialized || !currentSessionId) {
+        setAppError("Chat not ready or session ID missing. Please wait or refresh.");
+        return;
+    }
 
     const newUserMessage: ChatMessage = {
       id: `user-${Date.now()}`, sender: 'user', text: messageText, timestamp: new Date(),
     };
     setChatMessages(prev => [...prev, newUserMessage]);
     setIsAiResponding(true);
-    setAppError(null);
+    // Optimistically clear non-critical app errors when user sends a message
+    if(appError && !appError.toLowerCase().includes("token")) setAppError(null);
+
 
     try {
       const aiResponseText = await sendChatMessage(messageText, currentSessionId);
@@ -240,9 +195,10 @@ const App: React.FC = () => {
       setChatMessages(prev => [...prev, newAiMessage]);
     } catch (err) {
       const errorText = err instanceof Error ? err.message : "Failed to get response from AI.";
+      setAppError(`AI Error: ${errorText}`); // Show error more prominently if send fails
       const errorAiMessage: ChatMessage = {
         id: `ai-error-${Date.now()}`, sender: 'ai',
-        text: `Sorry, I encountered an error: ${errorText}. Please try again later.`,
+        text: `Sorry, I encountered an error: ${errorText}. Please try again.`,
         timestamp: new Date(),
       };
       setChatMessages(prev => [...prev, errorAiMessage]);
@@ -253,16 +209,18 @@ const App: React.FC = () => {
 
   const toggleChat = () => setIsChatOpen(prev => !prev);
 
-  if (isLoadingData && !appError && !appInitializedRef.current) { // Show initial loading only if app not initialized yet
+  // Initial loading screen for Shopify data (quick)
+  if (isLoadingShopifyData && !appInitializedRef.current) {
     return (
       <div className="fixed inset-0 bg-slate-900 bg-opacity-80 flex flex-col justify-center items-center z-50">
         <div className="inline-block"><LoadingSpinner /></div>
-        <p className="text-sky-400 mt-4 text-lg">Connecting to {storeDisplayName} & preparing AI Advisor...</p>
+        <p className="text-sky-400 mt-4 text-lg">Connecting to {HIFISTI_STORE_DOMAIN}...</p>
       </div>
     );
   }
-
-  if (appError && (!chatInitialized || !HIFISTI_STOREFRONT_API_TOKEN)) {
+  
+  // Critical error screen (e.g. missing token, or chat completely failed to init)
+  if ((appError && (!chatInitialized || HIFISTI_STOREFRONT_API_TOKEN === undefined)) ) {
      return (
         <div className="fixed inset-0 bg-slate-900 flex flex-col justify-center items-center p-8 z-40">
             <div className="max-w-md w-full">
@@ -271,7 +229,7 @@ const App: React.FC = () => {
                     <ErrorMessage message={`${appError}${HIFISTI_STOREFRONT_API_TOKEN === undefined ? " Please ensure the VITE_HIFISTI_STOREFRONT_API_TOKEN environment variable is correctly set and accessible." : ""}`} />
                 </div>
                  <footer className="text-center p-4 text-slate-500 text-sm mt-8">
-                    <p>&copy; {new Date().getFullYear()} {storeDisplayName} AI Product Advisor. Powered by Gemini.</p>
+                    <p>&copy; {new Date().getFullYear()} {storeDisplayName} AI Product Advisor. Powered by Gemini & Supabase.</p>
                 </footer>
             </div>
         </div>
@@ -292,20 +250,28 @@ const App: React.FC = () => {
         <div className="fixed bottom-20 right-5 w-[calc(100%-40px)] max-w-md h-[calc(100%-100px)] max-h-[650px] bg-slate-900 flex flex-col shadow-2xl rounded-xl z-[1000] border border-slate-700 overflow-hidden">
           <Header />
           <main className="flex-grow flex flex-col p-0 overflow-hidden">
-            <ChatInterface
-              messages={chatMessages}
-              onSendMessage={handleSendMessage}
-              isAiResponding={isAiResponding}
-              storeDisplayName={storeDisplayName}
-            />
+            {isAiResponding && chatMessages.length === 0 && !appError && ( // Initial AI loading for chat
+                <div className="flex-grow flex flex-col justify-center items-center">
+                    <LoadingSpinner />
+                    <p className="text-slate-400 mt-2">AI Advisor is waking up...</p>
+                </div>
+            )}
+            {(!isAiResponding || chatMessages.length > 0 || appError) && ( // Show chat interface once messages exist or error or not loading
+              <ChatInterface
+                messages={chatMessages}
+                onSendMessage={handleSendMessage}
+                isAiResponding={isAiResponding && chatMessages[chatMessages.length-1]?.sender === 'user'} // Show typing if user just sent
+                storeDisplayName={storeDisplayName}
+              />
+            )}
           </main>
-          {appError && chatInitialized && ( // Only show this minor error if chat is otherwise functional
-             <div className="p-2 border-t border-slate-700">
+          {appError && ( // Show errors at the bottom if chat is active
+             <div className="p-2 border-t border-slate-700 bg-slate-850">
                 <p className="text-xs text-red-400 text-center">{appError}</p>
              </div>
           )}
            <footer className="text-center py-2 px-4 bg-slate-950 text-slate-600 text-xs border-t border-slate-700">
-            {storeDisplayName} AI Advisor
+            {storeDisplayName} AI Advisor. Powered by Gemini & Supabase.
           </footer>
         </div>
       )}

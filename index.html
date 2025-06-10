@@ -1,10 +1,10 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <link rel="stylesheet" href="/src/index.css">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shopify AI Product Advisor (Vite)</title>
+  <title>Shopify AI Product Advisor (Vite + Supabase)</title>
   
   <!-- 
     Tailwind CSS is now expected to be part of your Vite build process.
@@ -13,41 +13,8 @@
     <script src="https://cdn.tailwindcss.com"></script> 
   -->
   
-  <style>
-    /* It's better to move these global styles to src/index.css or similar */
-    body {
-      font-family: 'Inter', sans-serif;
-    }
-    ::-webkit-scrollbar {
-      width: 8px;
-    }
-    ::-webkit-scrollbar-track {
-      background: #2d3748;
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #718096;
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: #a0aec0;
-    }
-    .form-input, .form-textarea, .form-select {
-      @apply w-full p-3 border border-slate-600 bg-slate-800 text-slate-100 rounded-lg shadow-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors duration-200 placeholder-slate-500;
-    }
-    .form-label {
-      @apply block text-sm font-medium text-slate-400 mb-1;
-    }
-    .button-primary {
-      @apply bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2 px-6 rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:bg-slate-600 disabled:text-slate-400 disabled:cursor-not-allowed;
-    }
-    .button-secondary {
-      @apply bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium py-2 px-4 rounded-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900;
-    }
-    .card {
-      @apply bg-slate-800 shadow-xl rounded-xl border border-slate-700;
-    }
-  </style>
-  <!-- Import map removed as Vite handles NPM dependencies -->
+  <!-- Global styles moved to src/index.css -->
+
 <script type="importmap">
 {
   "imports": {
@@ -55,6 +22,7 @@
     "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
     "react/": "https://esm.sh/react@^19.1.0/",
     "@google/genai": "https://esm.sh/@google/genai@^1.4.0",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.44.4",
     "react-icons/": "https://esm.sh/react-icons@^5.5.0/"
   }
 }
@@ -63,7 +31,7 @@
 </head>
 <body class="bg-slate-900 text-slate-200">
   <div id="root"></div>
-  <script type="module" src="/src/main.tsx"></script> 
+  <script type="module" src="/index.tsx"></script> 
 <script type="module" src="/index.tsx"></script>
 </body>
 </html>

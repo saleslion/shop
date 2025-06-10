@@ -1,20 +1,14 @@
 
-import { ShopifyArticleContextInfo, ShopifyCategory, ShopifyProductContextInfo } from '../types';
-
 // No direct GoogleGenAI import or API_KEY needed here anymore.
+// Types are still useful for frontend state if needed elsewhere, but not for AI context directly.
+// import { ShopifyArticleContextInfo, ShopifyCategory, ShopifyProductContextInfo } from '../types';
 
-// Helper to extract plain text from HTML (very basic) - this can be removed if not used by context prep in App.tsx
-// const stripHtml = (html: string | null | undefined): string => {
-//   if (!html) return '';
-//   const doc = new DOMParser().parseFromString(html, 'text/html');
-//   return doc.body.textContent || "";
-// };
 
-interface ShopifyStoreContext {
-  storeName: string | null;
-  categories: ShopifyCategory[];
-  articles: ShopifyArticleContextInfo[];
-  products: ShopifyProductContextInfo[]; 
+// Interface for the simplified data sent to the new backend for initialization.
+interface InitializeChatPayload {
+  storeName: string;
+  storeDomain: string;
+  // No more full product/article lists here
 }
 
 interface InitializeChatResponse {
@@ -22,7 +16,7 @@ interface InitializeChatResponse {
   sessionId: string; // Session ID from backend
 }
 
-export const initializeChatSession = async (storeContext: ShopifyStoreContext, storeDomain: string): Promise<InitializeChatResponse> => {
+export const initializeChatSession = async (initPayload: InitializeChatPayload): Promise<InitializeChatResponse> => {
   try {
     const response = await fetch('/api/chat', { // Calls your Vercel serverless function
       method: 'POST',
@@ -31,7 +25,7 @@ export const initializeChatSession = async (storeContext: ShopifyStoreContext, s
       },
       body: JSON.stringify({
         action: 'initialize',
-        payload: { storeContext, storeDomain },
+        payload: initPayload, // Send simplified payload
       }),
     });
 
@@ -42,7 +36,7 @@ export const initializeChatSession = async (storeContext: ShopifyStoreContext, s
     const data: InitializeChatResponse = await response.json();
     return data;
   } catch (error) {
-    console.error("Error initializing chat session via backend:", error);
+    console.error("Error initializing chat session via backend (v2):", error);
     throw error; // Re-throw to be caught by App.tsx
   }
 };
@@ -59,7 +53,7 @@ export const sendChatMessage = async (userMessage: string, sessionId: string): P
       },
       body: JSON.stringify({
         action: 'sendMessage',
-        payload: { userMessage, sessionId },
+        payload: { userMessage, sessionId }, // This payload remains the same
       }),
     });
 
@@ -70,7 +64,7 @@ export const sendChatMessage = async (userMessage: string, sessionId: string): P
     const data = await response.json();
     return data.text;
   } catch (error) {
-    console.error("Error sending chat message via backend:", error);
+    console.error("Error sending chat message via backend (v2):", error);
     throw error; // Re-throw
   }
 };
@@ -83,8 +77,8 @@ export const endChatSession = async (sessionId: string | null) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'endSession', payload: { sessionId } })
     });
-    console.log("Chat session ended signal sent to backend for session:", sessionId);
+    console.log("Chat session_v2 ended signal sent to backend for session:", sessionId);
   } catch (error) {
-    console.error("Error sending end chat session signal to backend:", error);
+    console.error("Error sending end chat session_v2 signal to backend:", error);
   }
 };

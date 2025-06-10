@@ -1,17 +1,52 @@
+
 // File: api/chat.js
-// (This file should be in the 'api' folder at the root of your project)
+// This file should be in the 'api' folder at the root of your Vercel project.
+
 import { GoogleGenAI, Chat } from '@google/genai';
+import { createClient } from '@supabase/supabase-js';
 
+// Environment Variables (set these in Vercel)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL_NAME = 'gemini-2.5-flash-preview-04-17'; // Ensure this is your desired model
+const GEMINI_MODEL_NAME = 'gemini-2.5-flash-preview-04-17'; // Ensure this matches your constants
 
-// Simple in-memory store for server-side chat sessions
-// For a production app, consider a more robust session store (e.g., Redis, Firestore)
-// if you need sessions to persist across multiple serverless function invocations
-// or scale beyond what a single instance can handle.
-// However, for Vercel's typical behavior, the `Chat` object itself maintains conversation history
-// for its lifetime, and this map just holds onto those `Chat` objects per sessionID.
-let serverSideChatSessions = {};
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY; // Use service_role for backend operations
+
+if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error("CRITICAL_SERVER_ERROR: Missing GEMINI_API_KEY, SUPABASE_URL, or SUPABASE_SERVICE_ROLE_KEY environment variables.");
+}
+
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: {
+    // Required for service_role key. See https://supabase.com/docs/guides/auth/server-side/creating-a-client#use-service-role-key
+    autoRefreshToken: false,
+    persistSession: false,
+    detectSessionInUrl: false
+  }
+});
+
+
+// Simple in-memory store for server-side chat sessions (Gemini Chat objects)
+let serverSideChatSessions = {}; // sessionId -> Chat object
+
+const EMBEDDING_MODEL_NAME = 'text-embedding-004'; // Google's embedding model
+
+async function getEmbedding(text) {
+  try {
+    const response = await ai.models.embedContent({
+        model: EMBEDDING_MODEL_NAME,
+        content: text,
+    });
+    return response.embedding.values;
+  } catch (e) {
+    console.error("Error generating embedding:", e);
+    // Potentially throw or return null to handle upstream
+    // For now, let's rethrow to make it visible
+    throw new Error(`Failed to generate embedding: ${e.message}`);
+  }
+}
+
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -19,88 +54,45 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: `Method ${req.method} Not Allowed` });
   }
 
-  if (!GEMINI_API_KEY) {
-    console.error("CRITICAL_SERVER_ERROR: GEMINI_API_KEY is not set in Vercel environment.");
-    // Do not expose the exact error "API key missing" to the client for security.
-    return res.status(500).json({ error: 'AI service configuration error on server.' });
-  }
-
-  let ai;
-  try {
-    ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-  } catch (sdkError) {
-    console.error("CRITICAL_SERVER_ERROR: Failed to initialize GoogleGenAI SDK.", sdkError);
-    return res.status(500).json({ error: 'AI service SDK initialization failed on server.' });
+  if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return res.status(500).json({ error: 'AI service or Database configuration error on server.' });
   }
 
   const { action, payload } = req.body;
 
   try {
     if (action === 'initialize') {
-      const { storeContext, storeDomain } = payload;
-      if (!storeContext || !storeDomain) {
-        return res.status(400).json({ error: 'Missing storeContext or storeDomain for initialization.' });
+      const { storeName, storeDomain } = payload; // Simplified payload
+      if (!storeName || !storeDomain) {
+        return res.status(400).json({ error: 'Missing storeName or storeDomain for initialization.' });
       }
 
-      const newSessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const newSessionId = `session_v2_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-      const storeName = storeContext.storeName || "the store";
-      const categoryNames = (storeContext.categories || []).map(c => `${c.name} (${c.productCount} products)`).join(', ') || 'various items';
-      const articleInfos = (storeContext.articles || []).map(a => `- "${a.title}" (ID: ${a.id}, Handle: ${a.handle}, Tags: ${(a.tags || []).join(', ') || 'N/A'}, Excerpt: ${a.excerpt})`).join('\n') || 'a selection of blog posts';
-      const productInfos = (storeContext.products || []).map(p => `- "${p.title}" (ID: ${p.id}, Handle: ${p.handle}, Category: ${p.product_type}, Tags: ${(p.tags || []).join(', ') || 'N/A'}, Description: ${p.short_description})`).join('\n') || 'a range of products';
-      const currentStoreDomainForLinks = storeDomain.includes('.') ? storeDomain : `${storeDomain}.myshopify.com`;
-
-      // Construct a comprehensive system instruction
       const systemInstruction = `You are a friendly, expert AI shopping assistant for "${storeName}".
-Your goal is to guide users to relevant products and articles based on their queries and the provided store context.
-You must adhere to the following instructions:
-1.  **Primary Goal**: Help users find products or information within ${storeName}.
-2.  **Context Awareness**: You have been provided with the following context about the store:
-    *   Store Name: ${storeName}
-    *   Store Domain for constructing links: ${currentStoreDomainForLinks}
-    *   Available Product Categories: ${categoryNames}.
-    *   Available Products (Title, ID, Handle, Category, Tags, Short Description):
-        ${productInfos}
-    *   Available Articles/Blog Posts (Title, ID, Handle, Tags, Excerpt):
-        ${articleInfos}
-3.  **Responding to Queries**:
-    *   When a user asks about products or categories, use the product information above.
-    *   When a user asks for advice or information that might be in a blog post, use the article information.
-    *   If a user's query is ambiguous, ask clarifying questions.
-4.  **Referring to Products/Articles**:
-    *   When suggesting a product, mention its full title. If relevant, also mention its category.
-    *   When suggesting an article, mention its full title.
-5.  **Providing Links**:
-    *   If you identify a specific product the user might be interested in, you can provide a link. Product links should be in the format: https://${currentStoreDomainForLinks}/products/{product_handle}
-    *   If you identify a specific article, you can provide a link. Article links are typically: https://${currentStoreDomainForLinks}/blogs/{blog_handle}/{article_handle}. Assume a common blog handle like 'news' or 'blog' if not specified. For example: https://${currentStoreDomainForLinks}/blogs/news/{article_handle}.
-    *   **Only provide links if you are confident about the handle and the item exists in the provided context.**
-6.  **Tone**: Be helpful, polite, and conversational.
-7.  **Limitations**:
-    *   Stick to the information provided in the context. Do not invent products, articles, or information not present.
-    *   If you cannot answer a question based on the context, politely say so (e.g., "I don't have information about that specific topic based on the current store data.").
-    *   Do not process orders, check inventory levels, or perform actions outside of providing information and advice based on the store catalog and articles.
-    *   Do not ask for personal information.
-8.  **Conversation Flow**: Start the conversation with a friendly welcome message and ask how you can help the user today with their ${storeName} shopping needs.
-
-Begin the first message by welcoming the user to the ${storeName} AI Advisor and asking how you can assist them.
-`;
+Your goal is to guide users to relevant products and articles based on their queries.
+You will be provided with relevant product and article snippets based on the user's query from a database.
+Base your answers primarily on the provided snippets.
+If the provided snippets are not relevant or insufficient, you can say that you couldn't find specific information in the current context.
+When suggesting products or articles from the snippets, mention their titles.
+Product links use the format: https://${storeDomain}/products/{product_handle}
+Article links use the format: https://${storeDomain}/blogs/{blog_handle}/{article_handle} (assume blog_handle is 'news' if not specified).
+Be helpful, polite, and stick to the information provided. Do not invent products or information.
+Start the conversation with a friendly welcome message and ask how you can help.`;
 
       const chat = ai.chats.create({
         model: GEMINI_MODEL_NAME,
-        config: {
-          systemInstruction: systemInstruction,
-        }
+        config: { systemInstruction: systemInstruction },
+        // History will be managed explicitly or implicitly by sending it with each request
       });
-      serverSideChatSessions[newSessionId] = chat;
+      serverSideChatSessions[newSessionId] = { chatInstance: chat, history: [] };
 
-      // Send an initial message from the AI based on the system instruction context
-      // For example, "Hello! I'm the AI assistant for {storeName}. How can I help you explore our products or articles today?"
-      // The system instruction already guides the AI to start the conversation.
-      // We can send an empty first message from user side to trigger AI's first response,
-      // or let the AI generate its first message based on system instruction directly if supported.
-      // For explicit first message:
-      const initialAiResponse = await chat.sendMessage({ message: "Hello" }); // User says "Hello" implicitly to start
+      // Let AI generate its first message based on system instruction
+      const initialAiResponse = await chat.sendMessage({ message: "Hello" }); // User implicitly says "Hello"
 
+      serverSideChatSessions[newSessionId].history.push({ role: "user", parts: [{ text: "Hello" }] });
+      serverSideChatSessions[newSessionId].history.push({ role: "model", parts: [{ text: initialAiResponse.text }] });
+      
       return res.status(200).json({
         text: initialAiResponse.text,
         sessionId: newSessionId,
@@ -112,19 +104,86 @@ Begin the first message by welcoming the user to the ${storeName} AI Advisor and
         return res.status(400).json({ error: 'Missing userMessage or sessionId.' });
       }
 
-      const chatSession = serverSideChatSessions[sessionId];
-      if (!chatSession) {
+      const session = serverSideChatSessions[sessionId];
+      if (!session || !session.chatInstance) {
         return res.status(404).json({ error: 'Chat session not found or expired.' });
       }
 
-      const response = await chatSession.sendMessage({ message: userMessage });
+      // 1. Generate embedding for user's message
+      const queryEmbedding = await getEmbedding(userMessage);
+
+      // 2. Query Supabase for relevant products and articles
+      let contextSnippets = "";
+      const MAX_CONTEXT_ITEMS = 3; // Max N products and N articles
+
+      if (queryEmbedding) {
+        const { data: products, error: productError } = await supabase.rpc('match_products', {
+          query_embedding: queryEmbedding,
+          match_threshold: 0.75, // Adjust this threshold
+          match_count: MAX_CONTEXT_ITEMS
+        });
+        if (productError) console.error("Supabase product match error:", productError.message);
+
+        const { data: articles, error: articleError } = await supabase.rpc('match_articles', {
+          query_embedding: queryEmbedding,
+          match_threshold: 0.75, // Adjust this threshold
+          match_count: MAX_CONTEXT_ITEMS
+        });
+        if (articleError) console.error("Supabase article match error:", articleError.message);
+        
+        let dynamicContext = "Relevant context from the store:\n";
+        if (products && products.length > 0) {
+            dynamicContext += "Products:\n";
+            products.forEach(p => {
+                dynamicContext += `- Title: ${p.title}, Category: ${p.product_type || 'N/A'}, Description: ${p.short_description}, Handle: ${p.handle}\n`;
+            });
+        }
+        if (articles && articles.length > 0) {
+            dynamicContext += "Articles:\n";
+            articles.forEach(a => {
+                dynamicContext += `- Title: ${a.title}, Excerpt: ${a.excerpt}, Handle: ${a.handle}\n`;
+            });
+        }
+        if ((!products || products.length === 0) && (!articles || articles.length === 0)) {
+            dynamicContext += "No specific products or articles found matching your query in the database.\n";
+        }
+        contextSnippets = dynamicContext;
+      } else {
+        contextSnippets = "Could not process query for semantic search.\n";
+      }
+      
+      // Construct the prompt for Gemini
+      // The system instruction is part of the chat instance.
+      // We send the history and the new message with context.
+      
+      const currentHistory = session.history;
+      
+      const contents = [
+        ...currentHistory,
+        { role: "user", parts: [{ text: `${userMessage}\n\n${contextSnippets}` }] }
+      ];
+
+      const response = await session.chatInstance.sendMessage({
+          contents: contents // Sending full history for context aware conversation
+      });
+      
+      // Update history
+      session.history.push({ role: "user", parts: [{ text: userMessage }] }); // Log original user message without appended context
+      session.history.push({ role: "model", parts: [{ text: response.text }] });
+
+      // Optional: Trim history to prevent it from growing too large
+      const MAX_HISTORY_TURNS = 10; // Keep last N turns (user + model = 1 turn)
+      if (session.history.length > MAX_HISTORY_TURNS * 2) {
+          session.history = session.history.slice(-MAX_HISTORY_TURNS * 2);
+      }
+
       return res.status(200).json({ text: response.text });
 
     } else if (action === 'endSession') {
       const { sessionId } = payload;
       if (sessionId && serverSideChatSessions[sessionId]) {
         delete serverSideChatSessions[sessionId];
-        console.log(`Chat session ended and removed: ${sessionId}`);
+        console.log(`Chat session_v2 ended and removed: ${sessionId}`);
         return res.status(200).json({ message: 'Session ended.' });
       }
       return res.status(404).json({ message: 'Session not found or already ended.'});
@@ -134,15 +193,13 @@ Begin the first message by welcoming the user to the ${storeName} AI Advisor and
     }
 
   } catch (error) {
-    console.error(`Error in /api/chat (action: ${action}):`, error);
-    // Avoid sending detailed error messages to the client in production
+    console.error(`Error in /api/chat (action: ${action}):`, error.message, error.stack);
     let clientErrorMessage = 'An error occurred while processing your request with the AI service.';
     if (error.message && error.message.includes('SAFETY')) {
         clientErrorMessage = "The AI could not provide a response due to safety guidelines. Please try rephrasing your request."
     } else if (error.message && error.message.toLowerCase().includes('api key not valid')) {
         clientErrorMessage = "There's an issue with the AI service configuration on the server."
-    }
-    // Additional error handling for specific Gemini errors can be added here
+    } // Add more specific error checks if needed
     return res.status(500).json({ error: clientErrorMessage });
   }
 }

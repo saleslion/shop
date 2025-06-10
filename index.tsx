@@ -1,7 +1,8 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
+import App from './App'; // Corrected path: App.tsx is in the root directory
+import './src/index.css'; // This path is correct as index.css is in src/
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

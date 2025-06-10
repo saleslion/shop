@@ -1,3 +1,4 @@
+
 // Represents a simplified Shopify Product
 export interface ShopifyProduct {
   id: string; // e.g., "gid://shopify/Product/1234567890"
@@ -35,7 +36,8 @@ export interface ShopifyCategory {
   productCount: number; // Number of products in this category
 }
 
-// Simplified article information passed to the AI prompt for context
+// Simplified article information passed to the AI prompt for context (PRE-RAG, less used now)
+// For RAG, the backend will format snippets from Supabase.
 export interface ShopifyArticleContextInfo {
   id: string;
   handle: string;
@@ -44,28 +46,29 @@ export interface ShopifyArticleContextInfo {
   tags: string[];
 }
 
-// Simplified product information passed to the AI prompt for context
+// Simplified product information passed to the AI prompt for context (PRE-RAG, less used now)
+// For RAG, the backend will format snippets from Supabase.
 export interface ShopifyProductContextInfo {
   id: string;
-  handle: string; // Added handle for constructing URLs
+  handle: string; 
   title: string;
   product_type: string; // Category
   tags: string[];
-  // A very short summary of key features, derived from body_html or tags
   short_description: string; 
 }
 
-
+// This might still be useful for direct Shopify calls, e.g. for UI display.
 export interface StorefrontApiCredentials {
-  storeDomain: string; // e.g., "your-store.myshopify.com" or just "your-store"
+  storeDomain: string; 
   storefrontAccessToken: string;
 }
 
 // Represents a message in the chat interface
 export interface ChatMessage {
   id: string;
-  sender: 'user' | 'ai' | 'system'; // 'system' for initial instructions or silent context
+  sender: 'user' | 'ai' | 'system';
   text: string;
   timestamp: Date;
-  // We could add more fields like 'recommendedArticleIds' if AI gives structured data
+  // Potential future extension for RAG:
+  // retrieved_context?: Array<{type: 'product' | 'article', title: string, id: string, similarity?: number}>;
 }
