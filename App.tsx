@@ -1,4 +1,7 @@
 
+// In App.tsx
+console.log('VITE_HIFISTI_STOREFRONT_API_TOKEN from env:', import.meta.env.VITE_HIFISTI_STOREFRONT_API_TOKEN);
+// ... rest of your App.tsx code
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ShopifyProduct, ShopifyArticle, ShopifyCategory, ChatMessage, ShopifyArticleContextInfo, ShopifyProductContextInfo } from './types';
 import { MOCK_SHOPIFY_PRODUCTS, MOCK_SHOPIFY_ARTICLES } from './constants'; 
