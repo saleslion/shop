@@ -33,10 +33,18 @@ let serverSideChatSessions = {}; // sessionId -> Chat object
 const EMBEDDING_MODEL_NAME = 'text-embedding-004'; // Google's embedding model
 
 async function getEmbedding(text) {
+  if (!text || typeof text !== 'string' || text.trim() === '') {
+    console.warn("getEmbedding called with invalid text:", text);
+    // Optionally throw an error or return null, depending on how you want to handle this.
+    // For now, let's allow it to proceed and potentially fail at the API level if that's preferred,
+    // or handle it more gracefully by returning null/empty array.
+    // Given the API error, it's better to ensure valid input or throw.
+    throw new Error("Cannot generate embedding for empty or invalid text.");
+  }
   try {
     const response = await ai.models.embedContent({
         model: EMBEDDING_MODEL_NAME,
-        content: text,
+        content: { parts: [{ text: text }] }, // Corrected content structure
     });
     return response.embedding.values;
   } catch (e) {
@@ -55,6 +63,9 @@ export default async function handler(req, res) {
   }
 
   if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    // This check is good, but the variables might be undefined earlier if not set, leading to client init errors
+    // For now, this server-side check is fine.
+    console.error("CRITICAL_SERVER_ERROR: One or more environment variables (GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) are not set.");
     return res.status(500).json({ error: 'AI service or Database configuration error on server.' });
   }
 
@@ -83,11 +94,13 @@ Start the conversation with a friendly welcome message and ask how you can help.
       const chat = ai.chats.create({
         model: GEMINI_MODEL_NAME,
         config: { systemInstruction: systemInstruction },
-        // History will be managed explicitly or implicitly by sending it with each request
+        // History will be managed explicitly
       });
       serverSideChatSessions[newSessionId] = { chatInstance: chat, history: [] };
 
       // Let AI generate its first message based on system instruction
+      // Send an empty first message from user side to trigger AI's first response,
+      // or let the AI generate its first message based on system instruction directly if supported.
       const initialAiResponse = await chat.sendMessage({ message: "Hello" }); // User implicitly says "Hello"
 
       serverSideChatSessions[newSessionId].history.push({ role: "user", parts: [{ text: "Hello" }] });
@@ -103,6 +116,9 @@ Start the conversation with a friendly welcome message and ask how you can help.
       if (!userMessage || !sessionId) {
         return res.status(400).json({ error: 'Missing userMessage or sessionId.' });
       }
+      if (typeof userMessage !== 'string' || userMessage.trim() === '') {
+        return res.status(400).json({ error: 'User message cannot be empty.' });
+      }
 
       const session = serverSideChatSessions[sessionId];
       if (!session || !session.chatInstance) {
@@ -117,31 +133,43 @@ Start the conversation with a friendly welcome message and ask how you can help.
       const MAX_CONTEXT_ITEMS = 3; // Max N products and N articles
 
       if (queryEmbedding) {
-        const { data: products, error: productError } = await supabase.rpc('match_products', {
-          query_embedding: queryEmbedding,
-          match_threshold: 0.75, // Adjust this threshold
-          match_count: MAX_CONTEXT_ITEMS
-        });
-        if (productError) console.error("Supabase product match error:", productError.message);
+        // Ensure RPC calls are awaited and errors are handled
+        let products = [], articles = [];
+        try {
+          const { data: matchedProducts, error: productError } = await supabase.rpc('match_products', {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.75, // Adjust this threshold
+            match_count: MAX_CONTEXT_ITEMS
+          });
+          if (productError) throw productError;
+          products = matchedProducts;
+        } catch (e) {
+          console.error("Supabase product match RPC error:", e.message);
+        }
 
-        const { data: articles, error: articleError } = await supabase.rpc('match_articles', {
-          query_embedding: queryEmbedding,
-          match_threshold: 0.75, // Adjust this threshold
-          match_count: MAX_CONTEXT_ITEMS
-        });
-        if (articleError) console.error("Supabase article match error:", articleError.message);
+        try {
+          const { data: matchedArticles, error: articleError } = await supabase.rpc('match_articles', {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.75, // Adjust this threshold
+            match_count: MAX_CONTEXT_ITEMS
+          });
+          if (articleError) throw articleError;
+          articles = matchedArticles;
+        } catch (e) {
+          console.error("Supabase article match RPC error:", e.message);
+        }
         
         let dynamicContext = "Relevant context from the store:\n";
         if (products && products.length > 0) {
             dynamicContext += "Products:\n";
-            products.forEach(p => {
-                dynamicContext += `- Title: ${p.title}, Category: ${p.product_type || 'N/A'}, Description: ${p.short_description}, Handle: ${p.handle}\n`;
+            products.forEach(p => { // Ensure p is not null/undefined
+                dynamicContext += `- Title: ${p.title || 'N/A'}, Category: ${p.product_type || 'N/A'}, Description: ${p.short_description || 'N/A'}, Handle: ${p.handle || 'N/A'}\n`;
             });
         }
         if (articles && articles.length > 0) {
             dynamicContext += "Articles:\n";
-            articles.forEach(a => {
-                dynamicContext += `- Title: ${a.title}, Excerpt: ${a.excerpt}, Handle: ${a.handle}\n`;
+            articles.forEach(a => { // Ensure a is not null/undefined
+                dynamicContext += `- Title: ${a.title || 'N/A'}, Excerpt: ${a.excerpt || 'N/A'}, Handle: ${a.handle || 'N/A'}\n`;
             });
         }
         if ((!products || products.length === 0) && (!articles || articles.length === 0)) {
@@ -149,30 +177,30 @@ Start the conversation with a friendly welcome message and ask how you can help.
         }
         contextSnippets = dynamicContext;
       } else {
-        contextSnippets = "Could not process query for semantic search.\n";
+        contextSnippets = "Could not process query for semantic search (embedding failed).\n";
       }
-      
-      // Construct the prompt for Gemini
-      // The system instruction is part of the chat instance.
-      // We send the history and the new message with context.
       
       const currentHistory = session.history;
       
-      const contents = [
+      const contentsForGemini = [
         ...currentHistory,
-        { role: "user", parts: [{ text: `${userMessage}\n\n${contextSnippets}` }] }
+        // The user's actual query is now part of the history.
+        // The contextSnippets should be presented clearly to the model.
+        // Option 1: Append context to the last user message (careful with token limits)
+        // Option 2: Insert a system-like message with context (might be cleaner)
+        // Let's try appending to user message as it's common for RAG context injection.
+        { role: "user", parts: [{ text: `User query: "${userMessage}"\n\nBased on the following information from the store, please answer the query:\n${contextSnippets}` }] }
       ];
 
       const response = await session.chatInstance.sendMessage({
-          contents: contents // Sending full history for context aware conversation
+          contents: contentsForGemini
       });
       
-      // Update history
-      session.history.push({ role: "user", parts: [{ text: userMessage }] }); // Log original user message without appended context
+      // Update history: Store the original user message and the AI's response
+      session.history.push({ role: "user", parts: [{ text: userMessage }] }); 
       session.history.push({ role: "model", parts: [{ text: response.text }] });
 
-      // Optional: Trim history to prevent it from growing too large
-      const MAX_HISTORY_TURNS = 10; // Keep last N turns (user + model = 1 turn)
+      const MAX_HISTORY_TURNS = 10; 
       if (session.history.length > MAX_HISTORY_TURNS * 2) {
           session.history = session.history.slice(-MAX_HISTORY_TURNS * 2);
       }
@@ -193,7 +221,7 @@ Start the conversation with a friendly welcome message and ask how you can help.
     }
 
   } catch (error) {
-    console.error(`Error in /api/chat (action: ${action}):`, error.message, error.stack);
+    console.error(`Error in /api/chat (action: ${action || 'unknown'}):`, error.message, error.stack);
     let clientErrorMessage = 'An error occurred while processing your request with the AI service.';
     if (error.message && error.message.includes('SAFETY')) {
         clientErrorMessage = "The AI could not provide a response due to safety guidelines. Please try rephrasing your request."
