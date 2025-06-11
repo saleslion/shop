@@ -72,3 +72,13 @@ export interface ChatMessage {
   // Potential future extension for RAG:
   // retrieved_context?: Array<{type: 'product' | 'article', title: string, id: string, similarity?: number}>;
 }
+
+// Represents the structure for logging chat interactions to Supabase
+export interface ChatInteractionLog {
+  id?: string; // Optional: Supabase will generate UUID
+  session_id: string;
+  user_query: string;
+  retrieved_context_summary: string | null; // Can be a JSON string of context items or a textual summary
+  ai_response: string;
+  timestamp?: Date; // Optional: Supabase will generate timestamp
+}
